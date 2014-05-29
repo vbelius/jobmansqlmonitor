@@ -26,9 +26,6 @@ import jobman.sql
 import datetime
 import sys
 import urllib
-
-from collections import OrderedDict
-
 import json
 
 server = {} # Filled in from command line
@@ -134,7 +131,7 @@ class JobmanMonitorServer(SimpleHTTPServer.SimpleHTTPRequestHandler):
         if not 'experimentid' in args.keys():
             self.wfile.write('Need to supply job id, e.g. reschedule_experiment?experimentid=0')
             return
-        eid = int(args['experimentid'][0])
+        eid = map( lambda x: int(x), args['experimentid'][0].split(",") )
         if 'force' in args.keys():
             force = args['force'][0]
             if force=='true':
@@ -145,29 +142,28 @@ class JobmanMonitorServer(SimpleHTTPServer.SimpleHTTPRequestHandler):
             force = False
         
         cur = self.get_cursor()
-        cur.execute( "select status from %strial where id=%d;"%(server['tablename'],eid) )
+        idcond = "id=" + " or id=".join( map(lambda x: str(x), eid ) )
+        cur.execute( "select status from %strial where %s;"%(server['tablename'],idcond) )
         rows = cur.fetchall()
         if len(rows)==0:
-            self.wfile.write("No job with ID %d"%eid)
+            self.wfile.write("No job with ID %d"%str(eid))
             return
         if int(rows[0][0])==jobman.sql.START:
-            self.wfile.write("Job with ID %d is already queued"%eid)
+            self.wfile.write("Job with ID %d is already queued"%eid[0])
             return
         if int(rows[0][0])==jobman.sql.RUNNING and (not force):
-            self.wfile.write("Job with ID %d is running. Are you sure you want to restart? If so ?force=true "%eid)
+            self.wfile.write("Job with ID %d is running. Are you sure you want to restart? If so ?force=true "%eid[0])
             return
         
-        query1 = "update %strial set status=%d where id=%d;"%(server['tablename'],jobman.sql.START,eid)
+        query1 = "update %strial set status=%d where %s;"%(server['tablename'],jobman.sql.START,idcond)
         cur.execute( query1 )
         self.conn.commit()
         self.wfile.write( "Updated %d rows\n"%cur.rowcount )
-        query2 = "update %skeyval set ival=%d where dict_id=%d and name='jobman.status';"%(server['tablename'],jobman.sql.START,eid)
+        idconddict = "dict_id=" + " or dict_id=".join( map(lambda x: str(x), eid ) )
+        query2 = "update %skeyval set ival=%d where %s and name='jobman.status';"%(server['tablename'],jobman.sql.START,idconddict)
         cur.execute( query2 )
         self.conn.commit()
         self.wfile.write( "Updated %d rows"%cur.rowcount )
-        
-        print query1
-        print query2
 
     def do_experiment_yaml_template( self, args ):
         self.send_response(200, 'OK')
@@ -226,7 +222,6 @@ class JobmanMonitorServer(SimpleHTTPServer.SimpleHTTPRequestHandler):
             plt.xlabel( xaxis )
             plt.ylabel( yaxis )
             for label,curve in curves.items():
-                print len(range(from_epoch, len(curve))), len(curve)
                 plt.plot( range(from_epoch, len(curve)), curve[from_epoch:], label=label )
             plt.legend()
                 
@@ -250,9 +245,7 @@ class JobmanMonitorServer(SimpleHTTPServer.SimpleHTTPRequestHandler):
         colstoget = colstoget + result_columns + hyperparam_columns
         result_columns = map( lambda x: x[len("results_"):], result_columns )
         hyperparam_columns = map( lambda x: x[len("hyperparameters_"):], hyperparam_columns )
-        
-        print hyperparam_columns
-        
+                
         cur = self.get_cursor()
         query = "select " + ",".join(filter( lambda x: x in colnames, colstoget )) + " from " + server['view'] + " order by id;"
 
@@ -290,76 +283,99 @@ class JobmanMonitorServer(SimpleHTTPServer.SimpleHTTPRequestHandler):
                             imgurl = "/render_graph?experimentid=%d&colname=%s"%(rows[i][0],col)
                             scale = "10%"
                             rows[i][8][col] = "<a href=\"%s\"><img height=\"%s\" src=\"%s\"></a>"%(imgurl,scale,imgurl)
+                        elif rows[i][8][col][0]=='sound':
+                            rows[i][8][col] = 'sound'
                 for j,col in enumerate(hyperparam_columns):
                     rows[i][9][col] = therest[len(result_columns) + j]
 
         template = """
                    <html>
                      <body>
+                       <link rel="stylesheet" type="text/css" href="//cdn.datatables.net/1.10.0-beta.1/css/jquery.dataTables.css">
+                       <script type="text/javascript" language="javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+                       <script type="text/javascript" language="javascript" src="http://cdn.datatables.net/1.10.0/js/jquery.dataTables.js"></script>
+                       <LINK href="http://cdn.datatables.net/1.10.0/css/jquery.dataTables.css" rel="stylesheet" type="text/css">
+                       <script type="text/javascript" language="javascript" src="http://cdn.datatables.net/colreorder/1.1.1/js/dataTables.colReorder.min.js"></script>
+                       <LINK href="http://cdn.datatables.net/colreorder/1.1.1/css/dataTables.colReorder.css" rel="stylesheet" type="text/css">
+                       <script type="text/javascript" language="javascript" src="http://cdn.datatables.net/colvis/1.1.0/js/dataTables.colVis.min.js"></script>
+                       <LINK href="http:////cdn.datatables.net/colvis/1.1.0/css/dataTables.colVis.css" rel="stylesheet"  type="text/css"> <!-- -->
+                       <script>
+                          $(document).ready(function() {
+                             $('#example').dataTable( {
+                                   /*dom: 'pRC',*/
+                                   stateSave: true
+                            });
+                          } );
+                       </script>
+
                        <center><h1>Table: {{ server['tablename'] }}</h1></center>
                        Missing information in the table? Try running jobman sqlview (see below)<br>
-                       <table border="1">
-                          <tr>
-                              <td colspan=2><center><b>Control</b></center></td>
-                              <td colspan=9><center><b>Jobman data</b></center></td>
-                              <td colspan={{ hyperparam_columns|length }}><center><b>Hyperparams</b></center></td>
-                              <td colspan={{ result_columns|length }}><center><b>Results</b></center></td>
-                          </tr>
-                          <tr>
-                              <td><b>Del</b></td>
-                              <td><b>Resched</b></td>
-                          
-                              <td><b>ID</b></td>
-                              <td><b>Status</b></td>
-                              <td><b>Yaml<br>template</b></td>
-                              <td><b>Execution<br>host</b></td>
-                              <td><b>Host<br>work dir</b></td>
-                              <td><b>Start<b>time</b></td>
-                              <td><b>End<b>time</b></td>
-                              <td><b>Run<b>time</b></td>
-                              <td><b>Last<b>update time</b></td>
+                       <table id="example" class="display" width="100%">
+                          <thead>
+                              <tr>
+                                  <td colspan=2><center><b>Control</b></center></td>
+                                  <td colspan=9><center><b>Jobman data</b></center></td>
+                                  <td colspan={{ hyperparam_columns|length }}><center><b>Hyperparams</b></center></td>
+                                  <td colspan={{ result_columns|length }}><center><b>Results</b></center></td>
+                              </tr>
+                              <tr>
+                                  <td><b>Del</b></td>
+                                  <td><b>Resched</b></td>
                               
-                              {% for col in hyperparam_columns %}
-                                 <td><b>{{ col }}</b></td>
-                              {% endfor %}
-                                                            
-                              {% for col in result_columns %}
-                                 <td><b>{{ col }}</b></td>
-                              {% endfor %}
-                          </tr>
-                          {% for row in rows %}
-                             <tr>
-                                <td> <a href="/delete_experiment?experimentid={{ row[0] }}">x</a></td>
-                                <td> <a href="/reschedule_experiment?experimentid={{ row[0] }}">o</a></td>
-                             
-                                <td>{{ row[0] }}</td>
-                                <td>{{ row[1] }}</td>
-                                <td><a href="/experiment_yaml_template?experimentid={{ row[0] }}">yaml</a></td>
-                                <td>{{ row[2] }}</td>
-                                <td><span title="{{ row[3] }}">here</span></td>
-                                <td>{{ row[4] }}</td>
-                                <td>{{ row[5] }}</td>
-                                <td>{{ row[6] }}</td>
-                                <td>{{ row[7] }}</td>
+                                  <td><b>ID</b></td>
+                                  <td><b>Status</b></td>
+                                  <td><b>Yaml<br>template</b></td>
+                                  <td><b>Execution<br>host</b></td>
+                                  <td><b>Host<br>work dir</b></td>
+                                  <td><b>Start<b>time</b></td>
+                                  <td><b>End<b>time</b></td>
+                                  <td><b>Run<b>time</b></td>
+                                  <td><b>Last<b>update time</b></td>
+                                  
+                                  {% for col in hyperparam_columns %}
+                                     <td><b>{{ col }}</b></td>
+                                  {% endfor %}
+                                                                
+                                  {% for col in result_columns %}
+                                     <td><b>{{ col }}</b></td>
+                                  {% endfor %}
+                              </tr>
+                          </thead>
+                          <tbody>
+                              {% for row in rows %}
+                                 <tr>
+                                    <td> <a href="/delete_experiment?experimentid={{ row[0] }}">x</a></td>
+                                    <td> <a href="/reschedule_experiment?experimentid={{ row[0] }}">o</a></td>
+                                 
+                                    <td>{{ row[0] }}</td>
+                                    <td>{{ row[1] }}</td>
+                                    <td><a href="/experiment_yaml_template?experimentid={{ row[0] }}">yaml</a></td>
+                                    <td>{{ row[2] }}</td>
+                                    <td><span title="{{ row[3] }}">here</span></td>
+                                    <td>{{ row[4] }}</td>
+                                    <td>{{ row[5] }}</td>
+                                    <td>{{ row[6] }}</td>
+                                    <td>{{ row[7] }}</td>
 
-                                {% for col in hyperparam_columns %}
-                                   <td>{{ row[9][col] }}</td>
-                                {% endfor %}                                
-                                
-                                {% for col in result_columns %}
-                                   <td>{{ row[8][col] }}</td>
-                                {% endfor %}
-                             </tr>
-                          {% endfor %}
+                                    {% for col in hyperparam_columns %}
+                                       <td>{{ row[9][col] }}</td>
+                                    {% endfor %}                                
+                                    
+                                    {% for col in result_columns %}
+                                       <td>{{ row[8][col] }}</td>
+                                    {% endfor %}
+                                 </tr>
+                              {% endfor %}
+                            </tbody>
                         </table>
                         <br>
                         To create the view needed by this script:<br>
-                        jobman sqlview postgresql://{{ server['user'] }}:{{ server['password'] }}@localhost/{{ server['dbname'] }}?table={{ server['tablename'] }} {{ server['view'] }} 
+                        jobman sqlview postgresql://{{ server['user'] }}:{{ server['password'] }}@{{ server['host'] }}/{{ server['dbname'] }}?table={{ server['tablename'] }} {{ server['view'] }} 
                         <br>
                         To schedule a job:<br>
-                        jobman -f sqlschedule postgresql://{{ server['user'] }}:{{ server['password'] }}@localhost/{{ server['dbname'] }}?table={{ server['tablename'] }} experiment.train_experiment [conf file]<br>
+                        jobman -f sqlschedule postgresql://{{ server['user'] }}:{{ server['password'] }}@{{ server['host'] }}/{{ server['dbname'] }}?table={{ server['tablename'] }} experiment.train_experiment [conf file]<br>
                         To run a job:<br>
-                        jobman sql postgresql://{{ server['user'] }}:{{ server['password'] }}@localhost/{{ server['dbname'] }}?table={{ server['tablename'] }} .<br>
+                        jobman sql postgresql://{{ server['user'] }}:{{ server['password'] }}@{{ server['host'] }}/{{ server['dbname'] }}?table={{ server['tablename'] }} .<br>
                      </body>
                    </html>"""
         
