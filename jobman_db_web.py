@@ -301,10 +301,78 @@ class JobmanMonitorServer(SimpleHTTPServer.SimpleHTTPRequestHandler):
                        <LINK href="http:////cdn.datatables.net/colvis/1.1.0/css/dataTables.colVis.css" rel="stylesheet"  type="text/css"> <!-- -->
                        <script>
                           $(document).ready(function() {
-                             $('#example').dataTable( {
+                             var datatable = $('#example').dataTable( {
                                    /*dom: 'pRC',*/
                                    stateSave: true
                             });
+                            
+                            var reload = function() {
+                            	
+                            	// Hämta uppdated HTML för denna sida 
+                            	$.ajax({
+	                            	url: window.location.href
+                            	}).done(function(html){
+                            		
+                            		// Parse:ea uppdaerade html till en jQuery-DOM och hitta tabellen
+                            		var $new_table = $.parseHTML(html).find('#example');
+                            		
+                            		var $old_table = $('#example');
+                            		
+                            		// Lägg till nya rader & uppdatera gamla
+                            		$new_table.find('.experiment').each(function( n, row ){
+                            			var $new_row = $(row);
+                            			var $old_row = $old_table.find('#' + $new_row.attr('id') );
+                            			
+                            			var values = [];
+                            			$new_row.children().each(function(){
+                            				values.push($(this).html());
+                            			});
+                            			
+                            			// om nytt experiment
+                            			if ( !$old_row.length ) {
+                            				//lägg till row
+                            				var $row = $(table.row.add(values).node());
+                            				//ge row rätt id och klass
+                            				$row.addClass('experiment').attr('id', $new_row.attr('id'));
+                            			} else {
+                            				//gå igenom varje td i row och uppdatera med nya värdet
+                            				$old_row.children().each(function( n, cell ){
+                            					table.cell(cell).data(values[n]);
+                            				});
+                            			}
+                            		});
+                            		
+                            		// Hitta rader som ej finns längre och ta bort
+                            		$old_table.find('.experiment').each(function( n, row ){
+                            			var $old_row = $(row);
+                            			var $new_row = $new_table.find('#' + $new_row.attr('id') );
+                            			
+                            			if ( !$new_row.length ) {
+                            				table.row(row).remove();
+                            			}
+                            		});
+                            		table.draw();
+                        		});	
+                            };
+                            // Uppdatera var 10:de sekund
+                            setInterval(reload, 10 * 1000);
+                            
+                            $('body').on('click', '.delete-experiment', function(e){
+                            	e.preventDefault();
+                            	var $link = $(this);
+                            	$.ajax({
+	                            	url: $link.attr('href')
+                            	}).done(reload);
+                            });
+                            
+                            $('body').on('click', '.reschedule-experiment', function(e){
+                            	e.preventDefault();
+                            	var $link = $(this);
+                            	$.ajax({
+	                            	url: $link.attr('href')
+                            	}).done(reload);
+                            });
+                            
                           } );
                        </script>
 
@@ -343,9 +411,9 @@ class JobmanMonitorServer(SimpleHTTPServer.SimpleHTTPRequestHandler):
                           </thead>
                           <tbody>
                               {% for row in rows %}
-                                 <tr>
-                                    <td> <a href="/delete_experiment?experimentid={{ row[0] }}">x</a></td>
-                                    <td> <a href="/reschedule_experiment?experimentid={{ row[0] }}">o</a></td>
+                                 <tr id="experiment-{{ row[0] }}" class="experiment">
+                                    <td> <a class="delete-experiment" href="/delete_experiment?experimentid={{ row[0] }}">x</a></td>
+                                    <td> <a class="reschedule-experiment" href="/reschedule_experiment?experimentid={{ row[0] }}">o</a></td>
                                  
                                     <td>{{ row[0] }}</td>
                                     <td>{{ row[1] }}</td>
