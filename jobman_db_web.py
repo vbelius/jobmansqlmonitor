@@ -337,7 +337,7 @@ class JobmanMonitorServer(SimpleHTTPServer.SimpleHTTPRequestHandler):
                             			} else {
                             				//gå igenom varje td i row och uppdatera med nya värdet
                             				$old_row.children().each(function( n, cell ){
-                            					table.cell(cell).data(values[n]);
+                            					datatable.cell(cell).data(values[n]);
                             				});
                             			}
                             		});
@@ -348,10 +348,10 @@ class JobmanMonitorServer(SimpleHTTPServer.SimpleHTTPRequestHandler):
                             			var $new_row = $new_table.find('#' + $new_row.attr('id') );
                             			
                             			if ( !$new_row.length ) {
-                            				table.row(row).remove();
+                            				datatable.row(row).remove();
                             			}
                             		});
-                            		table.draw();
+                            		datatable.draw();
                         		});	
                             };
                             // Uppdatera var 10:de sekund
